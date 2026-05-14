@@ -1,4 +1,4 @@
-import { storage } from "./storage";
+import { storage, resetAllData } from "./storage";
 import type { InsertConversation, InsertRecommendation } from "@shared/schema";
 
 // ====== 跨境电商商家↔平台 对话语境定义 ======
@@ -378,9 +378,14 @@ function buildTrajectory(start: string, end: string, turns: number) {
 
 async function seed() {
   const existing = await storage.listConversations();
-  if (existing.length > 0) {
-    console.log("已存在数据,跳过种子。");
+  // 幂等保护:完整 seed 为 180 条。若存量 < 150 视为不完整 / 趟旧数据,清空后重新 seed。
+  if (existing.length >= 150) {
+    console.log(`已存在 ${existing.length} 条对话,跳过种子。`);
     return;
+  }
+  if (existing.length > 0) {
+    console.log(`[seed] 检测到不完整数据 (${existing.length} 条,< 150),执行 reset 后重新 seed...`);
+    resetAllData();
   }
 
   const now = new Date("2026-05-11T20:00:00+08:00");

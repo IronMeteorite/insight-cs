@@ -114,6 +114,18 @@ tryAddColumn("recommendations", "owner", "TEXT");
 
 export const db = drizzle(sqlite);
 
+// 紧急复位:清空所有业务数据(保留表结构)。仅在启动检测到不完整/趟旧数据时调用。
+export function resetAllData() {
+  sqlite.exec(`
+    DELETE FROM merchant_events;
+    DELETE FROM merchants;
+    DELETE FROM recommendations;
+    DELETE FROM conversations;
+    DELETE FROM sqlite_sequence WHERE name IN ('conversations','recommendations','merchant_events');
+  `);
+  console.log("[storage] resetAllData: cleared conversations/recommendations/merchants/merchant_events");
+}
+
 export interface IStorage {
   listConversations(): Promise<Conversation[]>;
   getConversation(id: number): Promise<Conversation | undefined>;
