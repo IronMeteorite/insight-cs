@@ -376,7 +376,7 @@ function buildTrajectory(start: string, end: string, turns: number) {
   }));
 }
 
-async function seed() {
+export async function runSeed() {
   const existing = await storage.listConversations();
   // 幂等保护:完整 seed 为 180 条。若存量 < 150 视为不完整 / 趟旧数据,清空后重新 seed。
   if (existing.length >= 150) {
@@ -532,4 +532,4 @@ async function seed() {
   console.log(`已种子 ${total} 通对话、${recs.length} 条建议。`);
 }
 
-seed().catch(console.error);
+// 不再自启动；由 server/index.ts 显式 await runSeed() 调用，保证 seed -> aggregate 的顺序

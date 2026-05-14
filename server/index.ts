@@ -62,9 +62,12 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // 启动时种子数据（幂等）
+  // 启动时种子数据（幂等，显式 await 以保证完成后再走聚合）
   try {
-    await import("./seed");
+    const seedMod = await import("./seed");
+    if (typeof seedMod.runSeed === "function") {
+      await seedMod.runSeed();
+    }
   } catch (e) {
     console.error("seed error", e);
   }
