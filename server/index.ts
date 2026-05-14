@@ -72,12 +72,24 @@ app.use((req, res, next) => {
     console.error("seed error", e);
   }
 
-  // 启动时聚合商家画像（幂等：若 merchants 表为空才跑，跳过 LLM 加速启动）
+  // 启动时聚合商家画像（幂等）。正常应为 ~20 个 persona。
+  // 若 merchants 表为空 或 商家数 > 50（历史 bug 产生的遇同 id），重新 remap + aggregate。
   try {
     const { storage } = await import("./storage");
     const existing = await storage.listMerchants();
-    if (existing.length === 0) {
-      console.log("[startup] merchants table empty, running aggregate (no LLM)...");
+    const needRebuild = existing.length === 0 || existing.length > 50;
+    if (needRebuild) {
+      if (existing.length > 50) {
+        console.log(`[startup] merchants 数量异常 (${existing.length} > 50)，清理后重建...`);
+        const { resetMerchantData } = await import("./storage");
+        resetMerchantData();
+      }
+      // 1. 先 remap：把随机生成的唯一 merchantId 合并到 ~20 个主力商家 persona
+      console.log("[startup] remapping conversations to ~20 merchant personas...");
+      const { runRemap } = await import("../scripts/remap-merchants");
+      runRemap();
+      // 2. 再 aggregate：基于 remap 后的 merchantId 生成画像
+      console.log("[startup] running aggregate (no LLM)...");
       const { runAggregate } = await import("../scripts/aggregate-merchants");
       await runAggregate({ useLLM: false });
       console.log("[startup] merchant aggregate done");

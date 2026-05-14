@@ -114,6 +114,16 @@ tryAddColumn("recommendations", "owner", "TEXT");
 
 export const db = drizzle(sqlite);
 
+// 只清空商家画像相关表（保留 conversations 和 recommendations）
+export function resetMerchantData() {
+  sqlite.exec(`
+    DELETE FROM merchant_events;
+    DELETE FROM merchants;
+    DELETE FROM sqlite_sequence WHERE name = 'merchant_events';
+  `);
+  console.log("[storage] resetMerchantData: cleared merchants/merchant_events");
+}
+
 // 紧急复位:清空所有业务数据(保留表结构)。仅在启动检测到不完整/趟旧数据时调用。
 export function resetAllData() {
   sqlite.exec(`

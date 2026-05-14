@@ -9,9 +9,6 @@
  */
 import Database from "better-sqlite3";
 
-const db = new Database("data.db");
-db.pragma("journal_mode = WAL");
-
 const PERSONAS = [
   // 中国大陆 - 主力商家(高工单量)
   { id: "M-CN-001", name: "深圳3C旗舰", region: "CN", weights: { 商品合规: 3, 物流时效: 3, 广告投放: 2, 提现结算: 2, 招商入驻: 1 } },
@@ -64,30 +61,48 @@ function pickMerchant(region: string, category: string): string {
   return scored[0].id;
 }
 
-// 读所有 conversations,按区域+category 分配到 personas
-const rows = db
-  .prepare("SELECT id, merchant_region, category FROM conversations")
-  .all() as { id: number; merchant_region: string; category: string }[];
+export function runRemap() {
+  const db = new Database("data.db");
+  db.pragma("journal_mode = WAL");
 
-console.log(`[remap] ${rows.length} conversations to remap`);
+  // 读所有 conversations,按区域+category 分配到 personas
+  const rows = db
+    .prepare("SELECT id, merchant_region, category FROM conversations")
+    .all() as { id: number; merchant_region: string; category: string }[];
 
-const updateStmt = db.prepare(
-  "UPDATE conversations SET merchant_id = ? WHERE id = ?"
-);
-const tx = db.transaction((items: { id: number; merchant_region: string; category: string }[]) => {
-  for (const r of items) {
-    const newId = pickMerchant(r.merchant_region, r.category);
-    updateStmt.run(newId, r.id);
-  }
-});
-tx(rows);
+  console.log(`[remap] ${rows.length} conversations to remap`);
 
-// 统计分布
-const dist = db
-  .prepare("SELECT merchant_id, COUNT(*) as cnt FROM conversations GROUP BY merchant_id ORDER BY cnt DESC")
-  .all() as { merchant_id: string; cnt: number }[];
+  const updateStmt = db.prepare(
+    "UPDATE conversations SET merchant_id = ? WHERE id = ?"
+  );
+  const tx = db.transaction((items: { id: number; merchant_region: string; category: string }[]) => {
+    for (const r of items) {
+      const newId = pickMerchant(r.merchant_region, r.category);
+      updateStmt.run(newId, r.id);
+    }
+  });
+  tx(rows);
 
-console.log(`[remap] new merchant distribution (${dist.length} merchants):`);
-dist.forEach((d) => console.log(`  ${d.merchant_id}: ${d.cnt} tickets`));
+  // 统计分布
+  const dist = db
+    .prepare("SELECT merchant_id, COUNT(*) as cnt FROM conversations GROUP BY merchant_id ORDER BY cnt DESC")
+    .all() as { merchant_id: string; cnt: number }[];
 
-console.log("[remap] done. now run: npx tsx scripts/aggregate-merchants.ts");
+  console.log(`[remap] new merchant distribution (${dist.length} merchants):`);
+  dist.forEach((d) => console.log(`  ${d.merchant_id}: ${d.cnt} tickets`));
+
+  db.close();
+  console.log("[remap] done");
+}
+
+// CLI 直接跱时走 main
+const isDirectRun =
+  typeof process !== "undefined" &&
+  Array.isArray(process.argv) &&
+  process.argv[1] &&
+  /remap-merchants/.test(process.argv[1]);
+
+if (isDirectRun) {
+  runRemap();
+  console.log("now run: npx tsx scripts/aggregate-merchants.ts");
+}
