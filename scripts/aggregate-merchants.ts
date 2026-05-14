@@ -52,6 +52,100 @@ function eventTypeFor(c: Conversation): InsertMerchantEvent["eventType"] {
   return "complaint";
 }
 
+// 区域代码 → 中文名
+const REGION_CN: Record<string, string> = {
+  CN: "中国大陆",
+  US: "北美",
+  EU: "欧洲",
+  SEA: "东南亚",
+  LATAM: "拉丁美洲",
+  MEA: "中东/非洲",
+};
+
+// 失败类型 → 中文描述
+const FAILURE_TYPE_CN: Record<string, string> = {
+  knowledge_gap: "知识库缺失",
+  policy_limit: "政策限制使发场受阻",
+  routing_error: "路由到人工响应超时",
+  merchant_misunderstanding: "商家对规则理解偏差",
+  system_bug: "系统故障",
+  llm_hallucination: "机器人给出错误回复",
+  agent_error: "人工处理不到位",
+  buyer_dispute: "买家事端争议未结",
+};
+
+// 启发式生成风险叙事 + 推荐动作（不调 LLM）
+function generateHeuristicNarrative(args: {
+  region: string;
+  ticketCount: number;
+  unresolved: number;
+  escalated: number;
+  avgEmotionEnd: number;
+  avgCsat: number;
+  churnRisk: number;
+  topCategories: { category: string; count: number }[];
+  topFailureTypes: { type: string; count: number }[];
+}): { narrative: string; action: string } {
+  const regionCn = REGION_CN[args.region] || args.region;
+  const tier =
+    args.churnRisk >= 0.75
+      ? "极高风险"
+      : args.churnRisk >= 0.5
+      ? "高风险"
+      : args.churnRisk >= 0.25
+      ? "中等风险"
+      : "低风险";
+
+  const topCatText = args.topCategories
+    .slice(0, 3)
+    .map((c) => `${c.category}（${c.count} 起）`)
+    .join("、");
+
+  const topFailText = args.topFailureTypes
+    .slice(0, 2)
+    .map((f) => FAILURE_TYPE_CN[f.type] || f.type)
+    .join("、");
+
+  const emotionDesc =
+    args.avgEmotionEnd >= 0.7
+      ? "整体情绪偏正面"
+      : args.avgEmotionEnd >= 0.45
+      ? "情绪偏中性但有下滑迹象"
+      : args.avgEmotionEnd >= 0.25
+      ? "情绪偏负面"
+      : "情绪严重负面、接近临界点";
+
+  const unresolvedRatio = args.ticketCount > 0 ? args.unresolved / args.ticketCount : 0;
+  const escalatedNote =
+    args.escalated > 0 ? `，其中 ${args.escalated} 条已升级人工` : "";
+
+  const narrative =
+    `${regionCn}商家近期共计 ${args.ticketCount} 起工单，未解决 ${args.unresolved} 条${escalatedNote}。` +
+    `高频痛点集中在${topCatText}。` +
+    (topFailText ? `主要失败原因为${topFailText}。` : "") +
+    `商家${emotionDesc}，平均 CSAT ${args.avgCsat.toFixed(1)}分。综合评估当前处于「${tier}」水位（流失分 ${args.churnRisk.toFixed(2)}）。`;
+
+  let action: string;
+  if (args.churnRisk >= 0.75) {
+    action =
+      `【P0 紧急】由所在区域商家成功经理于 24 小时内发起主动外呼，逐条复盘未解决工单；` +
+      `针对${args.topCategories[0]?.category || "高频场景"}开启专属加速通道，并同步产品侧优化事项。`;
+  } else if (args.churnRisk >= 0.5) {
+    action =
+      `【P1 高】 7 天内完成未解决工单复盘与闭环；` +
+      `重点跟踪${args.topCategories[0]?.category || "主要品类"}上的反复问题，并评估是否需定点培训或知识库补齐。`;
+  } else if (args.churnRisk >= 0.25) {
+    action =
+      `【P2 中】纳入双周跟进名单，保持${unresolvedRatio < 0.3 ? "当前解决节奏" : "提升首应速度"}；` +
+      `在下次商家调研中采集${args.topCategories[0]?.category || "该品类"}占用问题的根本诉求。`;
+  } else {
+    action =
+      `【P3 低】保持常规监控即可。当前问题解决能力充足，商家依赖度稳定，可作为样板案例在区域内复用运营经验。`;
+  }
+
+  return { narrative, action };
+}
+
 function riskTier(score: number): "critical" | "high" | "medium" | "low" {
   if (score >= 0.75) return "critical";
   if (score >= 0.5) return "high";
@@ -137,8 +231,20 @@ export async function runAggregate(opts: { useLLM?: boolean; single?: string } =
         emotion: c.emotionEnd,
       }));
 
-    let riskNarrative: string | null = null;
-    let recommendedAction: string | null = null;
+    // 默认先用启发式生成一份 narrative + action，保证任何情况下都有内容
+    const heuristic = generateHeuristicNarrative({
+      region: convs[0].merchantRegion,
+      ticketCount,
+      unresolved,
+      escalated,
+      avgEmotionEnd,
+      avgCsat,
+      churnRisk,
+      topCategories,
+      topFailureTypes,
+    });
+    let riskNarrative: string | null = heuristic.narrative;
+    let recommendedAction: string | null = heuristic.action;
     let keyQuotes = heuristicQuotes;
 
     if (USE_LLM) {

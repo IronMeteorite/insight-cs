@@ -77,18 +77,27 @@ app.use((req, res, next) => {
   try {
     const { storage } = await import("./storage");
     const existing = await storage.listMerchants();
-    const needRebuild = existing.length === 0 || existing.length > 50;
+    const missingNarrative = existing.length > 0 && existing.some((m) => !m.riskNarrative);
+    const needRebuild = existing.length === 0 || existing.length > 50 || missingNarrative;
+    if (missingNarrative) {
+      console.log("[startup] 检测到商家画像缺少 narrative，将重新生成。");
+    }
     if (needRebuild) {
+      const needRemap = existing.length === 0 || existing.length > 50;
       if (existing.length > 50) {
         console.log(`[startup] merchants 数量异常 (${existing.length} > 50)，清理后重建...`);
         const { resetMerchantData } = await import("./storage");
         resetMerchantData();
       }
-      // 1. 先 remap：把随机生成的唯一 merchantId 合并到 ~20 个主力商家 persona
-      console.log("[startup] remapping conversations to ~20 merchant personas...");
-      const { runRemap } = await import("../scripts/remap-merchants");
-      runRemap();
-      // 2. 再 aggregate：基于 remap 后的 merchantId 生成画像
+      if (needRemap) {
+        // 1. 先 remap：把随机生成的唯一 merchantId 合并到 ~20 个主力商家 persona
+        console.log("[startup] remapping conversations to ~20 merchant personas...");
+        const { runRemap } = await import("../scripts/remap-merchants");
+        runRemap();
+      } else {
+        console.log("[startup] 商家映射已正常，跳过 remap。");
+      }
+      // 2. aggregate：重新生成画像（含启发式 narrative）
       console.log("[startup] running aggregate (no LLM)...");
       const { runAggregate } = await import("../scripts/aggregate-merchants");
       await runAggregate({ useLLM: false });
