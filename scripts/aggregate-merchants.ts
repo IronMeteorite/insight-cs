@@ -13,8 +13,9 @@ import { storage } from "../server/storage";
 import type { Conversation, InsertMerchant, InsertMerchantEvent } from "../shared/schema";
 import { generateMerchantNarrative, type MerchantTicketSummary } from "../server/llm/merchant-llm";
 
-const USE_LLM = !process.argv.includes("--llm=0");
-const SINGLE = process.argv.find((a) => a.startsWith("--merchant="))?.split("=")[1];
+// CLI 默认: 走命令行参数;被 程序 import 时改用 runAggregate({ useLLM, single }) 传参
+const CLI_USE_LLM = !process.argv.includes("--llm=0");
+const CLI_SINGLE = process.argv.find((a) => a.startsWith("--merchant="))?.split("=")[1];
 
 function parseTrajectory(json: string): { turn: number; score: number }[] {
   try {
@@ -58,7 +59,9 @@ function riskTier(score: number): "critical" | "high" | "medium" | "low" {
   return "low";
 }
 
-async function main() {
+export async function runAggregate(opts: { useLLM?: boolean; single?: string } = {}) {
+  const USE_LLM = opts.useLLM ?? true;
+  const SINGLE = opts.single;
   console.log(`[aggregate] LLM=${USE_LLM} single=${SINGLE || "all"}`);
 
   const all = await storage.listConversations();
@@ -215,10 +218,20 @@ async function main() {
   }
 
   console.log("[aggregate] done");
-  process.exit(0);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// 只有被命令行直接调用时才走 main + exit;被 import 时仅导出 runAggregate
+const isDirectRun =
+  typeof process !== "undefined" &&
+  Array.isArray(process.argv) &&
+  process.argv[1] &&
+  /aggregate-merchants/.test(process.argv[1]);
+
+if (isDirectRun) {
+  runAggregate({ useLLM: CLI_USE_LLM, single: CLI_SINGLE })
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+}

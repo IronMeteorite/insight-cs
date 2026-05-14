@@ -68,6 +68,23 @@ app.use((req, res, next) => {
   } catch (e) {
     console.error("seed error", e);
   }
+
+  // 启动时聚合商家画像（幂等：若 merchants 表为空才跑，跳过 LLM 加速启动）
+  try {
+    const { storage } = await import("./storage");
+    const existing = await storage.listMerchants();
+    if (existing.length === 0) {
+      console.log("[startup] merchants table empty, running aggregate (no LLM)...");
+      const { runAggregate } = await import("../scripts/aggregate-merchants");
+      await runAggregate({ useLLM: false });
+      console.log("[startup] merchant aggregate done");
+    } else {
+      console.log(`[startup] merchants already aggregated (${existing.length}), skip`);
+    }
+  } catch (e) {
+    console.error("aggregate error", e);
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
