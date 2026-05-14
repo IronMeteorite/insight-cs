@@ -1,3 +1,11 @@
+---
+title: Insight CS
+emoji: 📊
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Insight CS
 
 > 跨境电商商家客服对话的智能分析平台 — 自动归类诉求、识别失效根因、追踪情绪轨迹、闭环优化建议。
